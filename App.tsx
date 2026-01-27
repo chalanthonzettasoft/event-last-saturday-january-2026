@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { ViewMode, WordEntry, WheelState, DBSession, DBRoom, Session } from './types';
 import WordCloudChart from './components/WordCloudChart';
 import WordList from './components/WordList';
@@ -6,6 +6,7 @@ import LoginScreen from './components/LoginScreen';
 import RandomWheel from './components/RandomWheel';
 import SessionHistory from './components/SessionHistory';
 import { supabase, isSupabaseConfigured } from './services/supabaseClient';
+import { groupWordsWithLocalAI, WordGroup, isModelReady } from './services/localGroupingService';
 import { normalizeForGrouping, getBestDisplayText, generateId } from './utils/textUtils';
 import { 
   Cloud, 
@@ -25,20 +26,22 @@ import {
   X as XIcon,
   Hash,
   HelpCircle,
-  Trash2,
+  Merge as MergeIcon,
   Edit3,
   Lock,
   RefreshCw,
-  AlertTriangle,
-  ArrowRight,
   Maximize2,
-  Users
+  Users,
+  Trash2,
+  Sparkles,
+  Loader2
 } from 'lucide-react';
 
 const App: React.FC = () => {
   // --- Auth State ---
   const [currentUser, setCurrentUser] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isRestoringSession, setIsRestoringSession] = useState(true); // Loading state for auto-login
   
   // New Structure: Room (Persistent) vs Session (Ephemeral Question)
   const [currentRoom, setCurrentRoom] = useState<DBRoom | null>(null);
@@ -47,7 +50,10 @@ const App: React.FC = () => {
   // --- App Data ---
   const [words, setWords] = useState<WordEntry[]>([]);
   const [topic, setTopic] = useState<string>('');
-  const [onlineCount, setOnlineCount] = useState<number>(1);
+  
+  // Online Users State
+  const [onlineUsers, setOnlineUsers] = useState<string[]>([]);
+  const [showOnlineList, setShowOnlineList] = useState(false);
   
   // Controls visibility of results for everyone (Synced via Broadcast)
   const [showResults, setShowResults] = useState<boolean>(false);
@@ -69,6 +75,7 @@ const App: React.FC = () => {
   const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.CLOUD);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isAiProcessing, setIsAiProcessing] = useState(false); // AI Loading
   const [showRoomCodeModal, setShowRoomCodeModal] = useState(false);
   
   // "New Question" UI
@@ -77,8 +84,6 @@ const App: React.FC = () => {
   
   // --- Admin UI State ---
   const [adminSelectedIds, setAdminSelectedIds] = useState<string[]>([]);
-  const [isEditingTopic, setIsEditingTopic] = useState(false);
-  const [tempTopic, setTempTopic] = useState('');
   const [showHistory, setShowHistory] = useState(false);
   const [sessionHistory, setSessionHistory] = useState<Session[]>([]);
 
@@ -90,17 +95,66 @@ const App: React.FC = () => {
     allSubmitters: string[];
   } | null>(null);
 
+  // --- AUTO-LOGIN / RESTORE SESSION ---
+  useEffect(() => {
+    const restoreSession = async () => {
+      const storedUser = localStorage.getItem('cloudmind_user');
+      const storedRoomCode = localStorage.getItem('cloudmind_room_code');
+      const storedIsAdmin = localStorage.getItem('cloudmind_is_admin') === 'true';
+
+      if (storedUser && storedRoomCode) {
+        try {
+          // 1. Fetch Room
+          const { data: room, error: roomError } = await supabase
+            .from('rooms')
+            .select('*')
+            .eq('code', storedRoomCode)
+            .eq('is_active', true)
+            .single();
+
+          if (room && !roomError) {
+             // 2. Fetch Active Session
+             const { data: session } = await supabase
+               .from('sessions')
+               .select('*')
+               .eq('room_id', room.id)
+               .eq('is_active', true)
+               .order('created_at', { ascending: false })
+               .limit(1)
+               .single();
+             
+             // Restore State
+             setCurrentUser(storedUser);
+             setIsAdmin(storedIsAdmin);
+             setCurrentRoom(room);
+             setCurrentSession(session || null);
+             if (session) {
+                setTopic(session.topic);
+             }
+          }
+        } catch (e) {
+          console.error("Auto-login failed:", e);
+          localStorage.removeItem('cloudmind_room_code');
+        }
+      }
+      setIsRestoringSession(false);
+    };
+
+    restoreSession();
+  }, []);
+
   // --- Helpers ---
   
   // Fetch Words for the Current Session
-  const fetchWords = useCallback(async () => {
-    if (!currentSession || !isSupabaseConfigured()) return;
+  const fetchWords = useCallback(async (targetSessionId?: string) => {
+    const sessionIdToFetch = targetSessionId || currentSession?.id;
+    if (!sessionIdToFetch || !isSupabaseConfigured()) return;
 
     // Fetch data specifically for this session
     const { data, error } = await supabase
       .from('words')
       .select('*')
-      .eq('session_id', currentSession.id);
+      .eq('session_id', sessionIdToFetch);
 
     if (error) {
       console.error('Error fetching words:', error);
@@ -151,6 +205,7 @@ const App: React.FC = () => {
                 setWords([]);
                 setMySubmission(null);
                 setShowResults(false);
+                setInputValue('');
             }
         }
       )
@@ -163,22 +218,30 @@ const App: React.FC = () => {
               filter: `room_id=eq.${currentRoom.id}`
           },
           (payload) => {
-              if (currentSession && payload.new.id === currentSession.id) {
-                  const updatedSession = payload.new as DBSession;
+              const updatedSession = payload.new as DBSession;
+              
+              if (currentSession && updatedSession.id === currentSession.id) {
+                  // Current session updates (topic change, deactivation)
                   if (updatedSession.topic !== topic) {
                       setTopic(updatedSession.topic);
                   }
+              } else if (updatedSession.is_active === true) {
+                 // A different session became active (Restore happened)
+                 // We need to switch to it
+                 setCurrentSession(updatedSession);
+                 setTopic(updatedSession.topic);
+                 // We don't clear words immediately if we are the admin who restored it, 
+                 // as we might have pre-fetched. But for others, clear/fetch.
+                 // Ideally fetchWords will run due to currentSession dependency change.
               }
           }
       )
       // --- PRESENCE LOGIC ---
       .on('presence', { event: 'sync' }, () => {
          const newState = roomChannel.presenceState();
-         // Count unique users based on nickname (or some ID)
-         // newState is { "id": [ { user: '...', online_at: ... } ] }
-         const users = Object.values(newState).flat() as any[];
-         const uniqueUsers = new Set(users.map(u => u.user)).size;
-         setOnlineCount(uniqueUsers);
+         const users = Object.values(newState).flat().map((u: any) => u.user);
+         const uniqueUsers = Array.from(new Set(users));
+         setOnlineUsers(uniqueUsers);
       })
       .subscribe(async (status) => {
           if (status === 'SUBSCRIBED') {
@@ -199,12 +262,11 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!currentSession || !isSupabaseConfigured()) return;
 
-    // Initial load
-    fetchWords();
+    // Initial load for this session
+    fetchWords(currentSession.id);
     setTopic(currentSession.topic);
 
     // Subscribe to ALL word changes
-    // Using a specific channel name for this session to ensure uniqueness
     const channelId = `words_session_${currentSession.id}`;
     const wordChannel = supabase
       .channel(channelId)
@@ -216,21 +278,21 @@ const App: React.FC = () => {
           table: 'words',
         },
         () => {
-             fetchWords();
+             fetchWords(currentSession.id);
         }
       )
       .subscribe();
 
     // --- POLLING BACKUP ---
     const intervalId = setInterval(() => {
-      fetchWords();
+      fetchWords(currentSession.id);
     }, 3000);
 
     return () => {
       supabase.removeChannel(wordChannel);
       clearInterval(intervalId);
     };
-  }, [currentSession, fetchWords]);
+  }, [currentSession, fetchWords]); // fetchWords is memoized
 
   // 3. Wheel Sync & Show/Hide Sync (Per Room)
   useEffect(() => {
@@ -302,18 +364,26 @@ const App: React.FC = () => {
 
   const handleLogin = (nickname: string, adminMode: boolean, roomData: DBRoom, initialSession: DBSession | null) => {
     localStorage.setItem('cloudmind_user', nickname);
+    localStorage.setItem('cloudmind_room_code', roomData.code);
+    localStorage.setItem('cloudmind_is_admin', String(adminMode));
+
     setCurrentUser(nickname);
     setIsAdmin(adminMode);
     setCurrentRoom(roomData);
     setCurrentSession(initialSession); 
     if (initialSession) {
         setTopic(initialSession.topic);
+    } else {
+        setTopic("รอคำถามจาก Admin...");
     }
     setShowResults(false);
   };
 
   const handleLogout = () => {
     localStorage.removeItem('cloudmind_user');
+    localStorage.removeItem('cloudmind_room_code');
+    localStorage.removeItem('cloudmind_is_admin');
+
     setCurrentUser(null);
     setIsAdmin(false);
     setCurrentRoom(null);
@@ -321,7 +391,94 @@ const App: React.FC = () => {
     setWords([]);
   };
 
-  const toggleShowResults = () => {
+  const executeBatchMerge = async (groups: WordGroup[]) => {
+      if (!currentSession) return;
+      
+      try {
+        for (const group of groups) {
+            // Find words to merge
+            const targetWords = words.filter(w => group.idsToMerge.includes(w.id));
+            if (targetWords.length === 0) continue;
+
+            // Calculate totals
+            const totalCount = targetWords.reduce((acc, curr) => acc + curr.count, 0);
+            const allSubmitters = targetWords.flatMap(w => w.submittedBy);
+            const newId = generateId();
+            const newNormalized = normalizeForGrouping(group.masterText);
+
+            // Insert merged
+            const { error: insertError } = await supabase.from('words').insert({
+                id: newId,
+                session_id: currentSession.id,
+                text: group.masterText,
+                normalized_text: newNormalized,
+                count: totalCount,
+                submitted_by: allSubmitters
+            });
+
+            if (insertError) {
+                console.error("AI Merge Insert Error", insertError);
+                continue; // Skip if dup or error
+            }
+
+            // Delete old
+            await supabase.from('words').delete().in('id', group.idsToMerge);
+        }
+        // Refresh after batch
+        fetchWords();
+      } catch (e) {
+        console.error("Batch Merge Error", e);
+      }
+  };
+
+  const toggleShowResults = async () => {
+    // If we are showing results (going from False -> True) AND we are Admin
+    if (!showResults && isAdmin) {
+        // Ask if user wants AI grouping
+        const wantAI = window.confirm("ต้องการให้ AI ช่วยรวมคำตอบที่เหมือนกันให้หรือไม่?\n(เช่น 'ดีมาก' กับ 'ดีสุดๆ')");
+        
+        if (wantAI) {
+            setIsAiProcessing(true);
+            try {
+                // 1. Fetch latest words just to be sure
+                const { data: latestData } = await supabase
+                    .from('words')
+                    .select('*')
+                    .eq('session_id', currentSession?.id);
+                
+                if (latestData) {
+                    const currentWords = latestData.map((item: any) => ({
+                        id: item.id,
+                        text: item.text,
+                        normalizedText: item.normalized_text || '',
+                        count: item.count,
+                        submittedBy: item.submitted_by || [],
+                        sessionId: item.session_id || ''
+                    })) as WordEntry[];
+
+                    // 2. Call Local AI
+                    if (!isModelReady()) {
+                        alert("กำลังโหลด AI Model... (ครั้งแรกอาจใช้เวลาสักครู่)");
+                    }
+                    const groups = await groupWordsWithLocalAI(topic, currentWords, 0.7);
+                    
+                    // 3. Execute Merges
+                    if (groups.length > 0) {
+                        await executeBatchMerge(groups);
+                        alert(`รวมคำสำเร็จ ${groups.length} กลุ่ม`);
+                    } else {
+                        alert("AI ไม่พบคำที่ต้องรวมกันเพิ่ม");
+                    }
+                }
+            } catch (err: any) {
+                alert("AI Error: " + err.message);
+            } finally {
+                setIsAiProcessing(false);
+            }
+        }
+    }
+
+    // Toggle State
     const newState = !showResults;
     setShowResults(newState);
     if (currentRoom) {
@@ -331,6 +488,60 @@ const App: React.FC = () => {
         payload: { showResults: newState }
       });
     }
+  };
+
+  const handleRestoreSession = async (sessionId: string) => {
+      if (!currentRoom || !isAdmin) return;
+      
+      const confirmRestore = window.confirm("ต้องการนำคำถามเก่ากลับมาใช้ใหม่หรือไม่?\n(คำถามปัจจุบันจะถูกปิด)");
+      if (!confirmRestore) return;
+      
+      // Close modal immediately so user sees something happening
+      setShowHistory(false);
+      setIsLoading(true);
+
+      try {
+          // 1. Deactivate others first to prevent multiple actives
+          await supabase
+            .from('sessions')
+            .update({ is_active: false })
+            .eq('room_id', currentRoom.id)
+            .neq('id', sessionId);
+            
+          // 2. Activate Target
+          const { data: restoredSession, error } = await supabase
+            .from('sessions')
+            .update({ is_active: true })
+            .eq('id', sessionId)
+            .select()
+            .single();
+
+          if (error) throw error;
+          
+          // 3. Update Local State Immediately (Don't wait for Realtime)
+          // This fixes the "nothing happens" feeling
+          setCurrentSession(restoredSession);
+          setTopic(restoredSession.topic);
+          setShowResults(true); // Usually we want to show results for history
+          setWords([]); // Clear briefly
+          setMySubmission(null);
+          
+          // 4. Force fetch data for this session immediately
+          await fetchWords(sessionId);
+
+          // 5. Broadcast UI state to others
+          supabase.channel(`room_control_${currentRoom.code}`).send({
+            type: 'broadcast',
+            event: 'ui_state_update',
+            payload: { showResults: true }
+          });
+          
+      } catch (err: any) {
+          alert("กู้คืนไม่สำเร็จ: " + err.message);
+          setShowHistory(true); // Re-open if failed
+      } finally {
+          setIsLoading(false);
+      }
   };
 
   const handleAddWord = async (e: React.FormEvent) => {
@@ -431,6 +642,11 @@ const App: React.FC = () => {
     }
     
     try {
+        // Deactivate old session first
+        if (currentSession) {
+            await supabase.from('sessions').update({ is_active: false }).eq('id', currentSession.id);
+        }
+
         const { data: newSession, error } = await supabase
           .from('sessions')
           .insert({
@@ -444,11 +660,13 @@ const App: React.FC = () => {
 
         if (error) throw error;
 
+        // Current user (admin) updates immediately
         setCurrentSession(newSession);
         setTopic(newQuestionTopic.trim());
         setWords([]);
         setMySubmission(null);
         setShowResults(false);
+        setInputValue('');
         
         if (currentRoom) {
           supabase.channel(`room_control_${currentRoom.code}`).send({
@@ -475,21 +693,6 @@ const App: React.FC = () => {
             event: 'wheel_update',
             payload: newState,
         });
-    }
-  };
-
-  const updateTopic = async () => {
-    if (!currentSession) return;
-    const { error } = await supabase
-      .from('sessions')
-      .update({ topic: tempTopic })
-      .eq('id', currentSession.id);
-    
-    if (error) {
-        alert("เปลี่ยนหัวข้อไม่สำเร็จ: " + error.message);
-    } else {
-      setTopic(tempTopic);
-      setIsEditingTopic(false);
     }
   };
 
@@ -608,6 +811,10 @@ const App: React.FC = () => {
 
   // --- Render ---
 
+  if (isRestoringSession) {
+    return <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-400">Loading...</div>;
+  }
+
   if (!currentUser) {
     return <LoginScreen onLogin={handleLogin} />;
   }
@@ -619,6 +826,25 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center pb-48 md:pb-52 relative">
       
+      {/* AI Loading Overlay */}
+      {isAiProcessing && (
+          <div className="fixed inset-0 z-[80] bg-black/70 backdrop-blur-sm flex flex-col items-center justify-center text-white animate-in fade-in">
+              <Sparkles className="w-16 h-16 text-amber-400 animate-pulse mb-4" />
+              <h2 className="text-2xl font-bold mb-2">AI กำลังวิเคราะห์...</h2>
+              <p className="text-slate-300">กำลังจัดกลุ่มคำตอบที่มีความหมายเหมือนกัน</p>
+          </div>
+      )}
+      
+      {/* Loading Overlay (General) */}
+      {isLoading && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center pointer-events-none">
+           <div className="bg-black/50 p-4 rounded-xl backdrop-blur-sm flex flex-col items-center text-white animate-in fade-in">
+               <Loader2 className="animate-spin mb-2" size={32} />
+               <span className="text-sm font-medium">กำลังโหลด...</span>
+           </div>
+        </div>
+      )}
+
       {/* --- Header --- */}
       <header className="w-full bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
         <div className="max-w-4xl mx-auto px-4 py-3">
@@ -644,10 +870,14 @@ const App: React.FC = () => {
             
             <div className="flex items-center gap-2 justify-end">
               {/* Online Users Count */}
-              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-green-50 border border-green-100 rounded-full mr-1">
+              <button 
+                onClick={() => setShowOnlineList(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-green-50 border border-green-100 rounded-full mr-1 hover:bg-green-100 transition-colors cursor-pointer"
+                title="ดูรายชื่อคนออนไลน์"
+              >
                 <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-                <span className="text-xs font-bold text-green-700">{onlineCount} Online</span>
-              </div>
+                <span className="text-xs font-bold text-green-700">{onlineUsers.length} Online</span>
+              </button>
 
               <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 rounded-full">
                 <User size={14} className="text-slate-500" />
@@ -788,7 +1018,7 @@ const App: React.FC = () => {
                   disabled={adminSelectedIds.length < 2 || isLoading}
                   className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 disabled:text-slate-500 text-white px-5 py-3 rounded-xl font-bold flex items-center gap-2 transition-all shadow-lg shadow-indigo-900/50"
                 >
-                    <Merge size={20} />
+                    <MergeIcon size={20} />
                     <span>รวมคำ</span>
                 </button>
                 <button 
@@ -808,26 +1038,11 @@ const App: React.FC = () => {
           {currentSession && (
               <div className="w-full bg-white/95 backdrop-blur-sm border-t border-indigo-100 shadow-[0_-8px_30px_rgba(0,0,0,0.1)] pointer-events-auto pb-4 pt-4 px-4">
                   <div className="max-w-4xl mx-auto text-center">
-                    {isAdmin && isEditingTopic ? (
-                        <div className="flex gap-2 justify-center items-center">
-                            <input 
-                                type="text" 
-                                value={tempTopic}
-                                onChange={(e) => setTempTopic(e.target.value)}
-                                className="bg-white border-2 border-indigo-300 rounded-xl px-4 py-2 text-xl w-full max-w-lg"
-                                autoFocus
-                            />
-                            <button onClick={updateTopic} className="bg-green-500 text-white px-4 py-2 rounded-xl font-bold">Save</button>
-                            <button onClick={() => setIsEditingTopic(false)} className="bg-slate-200 text-slate-600 px-4 py-2 rounded-xl">Cancel</button>
-                        </div>
-                    ) : (
-                        <h2 
-                            onClick={() => { if(isAdmin) { setTempTopic(topic); setIsEditingTopic(true); } }}
-                            className={`text-2xl md:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-violet-600 leading-tight drop-shadow-sm ${isAdmin ? 'cursor-pointer hover:opacity-80' : ''}`}
-                        >
-                            {topic || "รอคำถาม..."}
-                        </h2>
-                    )}
+                    <h2 
+                        className="text-2xl md:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-violet-600 leading-tight drop-shadow-sm select-none"
+                    >
+                        {topic || "รอคำถาม..."}
+                    </h2>
                   </div>
               </div>
           )}
@@ -891,7 +1106,14 @@ const App: React.FC = () => {
         />
       )}
 
-      {showHistory && <SessionHistory sessions={sessionHistory} onClose={() => setShowHistory(false)} />}
+      {showHistory && (
+        <SessionHistory 
+            sessions={sessionHistory} 
+            onClose={() => setShowHistory(false)} 
+            isAdmin={isAdmin}
+            onRestore={handleRestoreSession}
+        />
+      )}
       
       {/* --- Custom Merge Confirmation Modal --- */}
       {mergeModalData && (
@@ -899,7 +1121,7 @@ const App: React.FC = () => {
             <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 animate-in slide-in-from-bottom-4 duration-300">
                 <div className="flex items-start gap-4 mb-4">
                     <div className="p-3 bg-indigo-100 text-indigo-600 rounded-full">
-                        <Merge size={24} />
+                        <MergeIcon size={24} />
                     </div>
                     <div>
                         <h3 className="text-lg font-bold text-slate-800">ยืนยันการรวมคำ</h3>
@@ -963,6 +1185,37 @@ const App: React.FC = () => {
              </h1>
              <p className="mt-8 text-xl text-slate-400">คลิกที่ไหนก็ได้เพื่อปิด</p>
           </div>
+      )}
+
+      {/* --- ONLINE USERS LIST MODAL --- */}
+      {showOnlineList && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in" onClick={() => setShowOnlineList(false)}>
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
+                <div className="bg-slate-50 px-4 py-3 border-b border-slate-100 flex justify-between items-center">
+                    <h3 className="font-bold text-slate-700 flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                        ผู้ที่กำลังออนไลน์ ({onlineUsers.length})
+                    </h3>
+                    <button onClick={() => setShowOnlineList(false)} className="text-slate-400 hover:text-slate-600">
+                        <XIcon size={20} />
+                    </button>
+                </div>
+                <div className="p-4 max-h-[60vh] overflow-y-auto">
+                    {onlineUsers.length === 0 ? (
+                        <p className="text-center text-slate-400 py-4">ไม่มีผู้ใช้งานอื่น</p>
+                    ) : (
+                        <div className="grid grid-cols-2 gap-2">
+                            {onlineUsers.map((user, idx) => (
+                                <div key={idx} className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 border border-slate-100 text-sm text-slate-600">
+                                    <User size={14} className="text-indigo-400" />
+                                    <span className="truncate">{user}</span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
       )}
 
     </div>

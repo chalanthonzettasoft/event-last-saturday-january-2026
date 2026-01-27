@@ -11,23 +11,26 @@
         font-family: 'Prompt', sans-serif;
       }
     </style>
-  <script type="importmap">
+    
+    <!-- 1. Import Map -->
+    <script type="importmap">
 {
   "imports": {
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react/": "https://esm.sh/react@^19.2.3/",
     "react": "https://esm.sh/react@^19.2.3",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
     "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
     "@google/genai": "https://esm.sh/@google/genai@^1.38.0",
     "d3": "https://esm.sh/d3@^7.9.0",
-    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2"
+    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2",
+    "@xenova/transformers": "https://esm.sh/@xenova/transformers@2.17.2"
   }
 }
 </script>
-<link rel="stylesheet" href="/index.css">
-</head>
+    <link rel="stylesheet" href="/index.css">
+  </head>
   <body class="bg-slate-50 text-slate-900">
     <div id="root"></div>
-  <script type="module" src="/index.tsx"></script>
-</body>
+    <script type="module" src="/index.tsx"></script>
+  </body>
 </html>

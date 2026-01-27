@@ -28,7 +28,9 @@ import {
   Trash2,
   Edit3,
   Lock,
-  RefreshCw
+  RefreshCw,
+  AlertTriangle,
+  ArrowRight
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -75,6 +77,14 @@ const App: React.FC = () => {
   const [tempTopic, setTempTopic] = useState('');
   const [showHistory, setShowHistory] = useState(false);
   const [sessionHistory, setSessionHistory] = useState<Session[]>([]);
+
+  // --- Merge Confirmation State ---
+  const [mergeModalData, setMergeModalData] = useState<{
+    items: any[];
+    combinedText: string;
+    totalCount: number;
+    allSubmitters: string[];
+  } | null>(null);
 
   // --- Helpers ---
   
@@ -492,42 +502,80 @@ const App: React.FC = () => {
     }
   };
 
-  const mergeSelectedWords = async () => {
-    if (adminSelectedIds.length < 2 || !currentSession || !currentRoom) return;
+  // -------------------------
+  // Merge Logic with Custom Modal
+  // -------------------------
+  
+  const initiateMerge = async () => {
+    // --- Pre-flight Checks ---
+    if (adminSelectedIds.length < 2) {
+         alert("กรุณาเลือกอย่างน้อย 2 คำเพื่อทำการรวม");
+         return;
+    }
+    
+    if (!currentSession) {
+         alert("ข้อผิดพลาด: ไม่พบ Session ปัจจุบัน (กรุณา Refresh หน้าจอ)");
+         return;
+    }
+
     setIsLoading(true);
 
     try {
-        // 1. Fetch Fresh Data (Crucial: Avoid stale state)
+        console.log("Fetching fresh words for merge...");
+        
+        // Fetch fresh data
         const { data: freshWords, error: fetchError } = await supabase
             .from('words')
             .select('*')
-            .in('id', adminSelectedIds)
-            .eq('session_id', currentSession.id);
+            .in('id', adminSelectedIds);
 
         if (fetchError) throw new Error("ดึงข้อมูลล่าสุดไม่สำเร็จ: " + fetchError.message);
+        
         if (!freshWords || freshWords.length < 2) {
-            alert("คำที่เลือกอาจถูกลบไปแล้ว กรุณาลองใหม่อีกครั้ง");
+            alert("ไม่พบคำที่เลือก หรือคำอาจถูกลบไปแล้ว กรุณาลองใหม่อีกครั้ง");
             setAdminSelectedIds([]);
             fetchWords();
             setIsLoading(false);
             return;
         }
 
-        // 2. Prepare Merge Data
-        // Sort by count desc to order the name "A + B"
-        const sortedFresh = freshWords.sort((a, b) => b.count - a.count);
-        const combinedText = sortedFresh.map(w => w.text).join(" + ");
-        const totalCount = freshWords.reduce((sum, w) => sum + w.count, 0);
-        // Combine submitters safely
-        const allSubmitters = freshWords.flatMap(w => w.submitted_by || []);
+        // Prepare Merge Data
+        const sortedFresh = freshWords.sort((a: any, b: any) => b.count - a.count);
+        const combinedText = sortedFresh.map((w: any) => w.text).join(" + ");
+        const totalCount = freshWords.reduce((sum: number, w: any) => sum + w.count, 0);
+        const allSubmitters = freshWords.flatMap((w: any) => w.submitted_by || []);
 
-        if (!window.confirm(`ยืนยันการรวมคำ:\n\n${sortedFresh.map(w => `- ${w.text} (${w.count})`).join('\n')}\n\nกลายเป็น:\n"${combinedText}"`)) {
-            setIsLoading(false);
-            return;
-        }
+        console.log("Opening Merge Modal with:", { combinedText, totalCount });
 
-        // 3. Insert NEW Word (Create new unified entry)
-        // We use insert instead of update to ensure a clean state
+        // OPEN MODAL instead of window.confirm
+        setMergeModalData({
+            items: sortedFresh,
+            combinedText,
+            totalCount,
+            allSubmitters
+        });
+        
+        // Turn off loading so user can interact with modal
+        setIsLoading(false);
+        
+    } catch (err: any) {
+        console.error("Merge Prep Failed:", err);
+        alert("เกิดข้อผิดพลาด: " + err.message);
+        setIsLoading(false);
+    }
+  };
+
+  const executeMerge = async () => {
+    if (!mergeModalData || !currentSession) return;
+    setIsLoading(true);
+    
+    try {
+        const { items, combinedText, totalCount, allSubmitters } = mergeModalData;
+        const idsToDelete = items.map(i => i.id);
+
+        console.log("Executing Merge...");
+
+        // 1. Insert NEW Word
         const newId = generateId();
         const newNormalized = normalizeForGrouping(combinedText);
 
@@ -541,8 +589,7 @@ const App: React.FC = () => {
         });
 
         if (insertError) {
-            // Handle unique violation if "A + B" already exists (but wasn't selected)
-            if (insertError.code === '23505') { // Unique constraint violation code
+            if (insertError.code === '23505') { 
                  alert("มีคำว่า '" + combinedText + "' อยู่แล้วในระบบ ไม่สามารถรวมได้ (ชื่อซ้ำ)");
             } else {
                  throw new Error("สร้างคำใหม่ไม่สำเร็จ: " + insertError.message);
@@ -551,33 +598,38 @@ const App: React.FC = () => {
             return; 
         }
 
-        // 4. Delete OLD Words
-        // Only if insert succeeded.
+        // 2. Delete OLD Words
         const { error: delError } = await supabase
             .from('words')
             .delete()
-            .in('id', adminSelectedIds);
+            .in('id', idsToDelete);
 
         if (delError) {
-             // Weird state: New word created, but old ones not deleted.
-             // We can live with this (duplicates) better than losing data, but let's warn.
+             console.error("Delete failed:", delError);
              alert("คำเตือน: สร้างคำใหม่แล้ว แต่ลบคำเดิมไม่สำเร็จ (" + delError.message + ")");
         }
 
-        // 5. Cleanup
+        console.log("Merge Success");
+
+        // 3. Cleanup
+        setMergeModalData(null);
         setAdminSelectedIds([]);
         fetchWords();
         
     } catch (err: any) {
-        console.error("Merge Failed:", err);
-        alert("เกิดข้อผิดพลาดในการรวมคำ: " + err.message);
+        console.error("Merge Exec Exception:", err);
+        alert("รวมคำไม่สำเร็จ: " + err.message);
     } finally {
         setIsLoading(false);
     }
   };
   
   const deleteSelectedWords = async () => {
-    if (adminSelectedIds.length === 0 || !currentSession) return;
+    if (adminSelectedIds.length === 0) return;
+    if (!currentSession) {
+        alert("Error: No Active Session");
+        return;
+    }
     if (!window.confirm(`ลบ ${adminSelectedIds.length} รายการที่เลือก?`)) return;
     
     setIsLoading(true);
@@ -793,7 +845,7 @@ const App: React.FC = () => {
                     <Trash2 size={20} />
                 </button>
                 <button 
-                  onClick={mergeSelectedWords}
+                  onClick={initiateMerge}
                   disabled={adminSelectedIds.length < 2 || isLoading}
                   className="bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 disabled:text-slate-500 text-white px-5 py-3 rounded-xl font-bold flex items-center gap-2 transition-all shadow-lg shadow-indigo-900/50"
                 >
@@ -869,6 +921,61 @@ const App: React.FC = () => {
       )}
 
       {showHistory && <SessionHistory sessions={sessionHistory} onClose={() => setShowHistory(false)} />}
+      
+      {/* --- Custom Merge Confirmation Modal --- */}
+      {mergeModalData && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 animate-in slide-in-from-bottom-4 duration-300">
+                <div className="flex items-start gap-4 mb-4">
+                    <div className="p-3 bg-indigo-100 text-indigo-600 rounded-full">
+                        <Merge size={24} />
+                    </div>
+                    <div>
+                        <h3 className="text-lg font-bold text-slate-800">ยืนยันการรวมคำ</h3>
+                        <p className="text-slate-500 text-sm">รายการที่เลือกจะถูกรวมเป็นคำตอบเดียว</p>
+                    </div>
+                </div>
+                
+                <div className="bg-slate-50 rounded-xl p-4 mb-6 border border-slate-100 max-h-[200px] overflow-y-auto">
+                    <div className="space-y-2 mb-4">
+                        {mergeModalData.items.map((item: any) => (
+                            <div key={item.id} className="flex justify-between text-sm text-slate-500">
+                                 <span>- {item.text}</span>
+                                 <span className="font-mono">({item.count})</span>
+                            </div>
+                        ))}
+                    </div>
+                    <div className="border-t border-slate-200 pt-3 flex flex-col gap-1">
+                        <span className="text-xs font-bold text-slate-400 uppercase">รวมเป็น:</span>
+                        <div className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                             {mergeModalData.combinedText}
+                             <span className="bg-indigo-100 text-indigo-700 text-xs px-2 py-0.5 rounded-full">
+                                {mergeModalData.totalCount}
+                             </span>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="flex gap-3">
+                    <button 
+                        onClick={() => setMergeModalData(null)}
+                        className="flex-1 py-3 text-slate-600 font-bold hover:bg-slate-100 rounded-xl transition-colors"
+                        disabled={isLoading}
+                    >
+                        ยกเลิก
+                    </button>
+                    <button 
+                        onClick={executeMerge}
+                        disabled={isLoading}
+                        className="flex-1 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-200 transition-all active:scale-95 flex justify-center items-center gap-2"
+                    >
+                        {isLoading ? <RefreshCw className="animate-spin" size={20}/> : 'ยืนยันรวมคำ'}
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
     </div>
   );
 };

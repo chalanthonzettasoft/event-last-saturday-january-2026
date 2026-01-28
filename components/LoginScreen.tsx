@@ -315,7 +315,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
             {isAdminMode ? <ShieldCheck size={32} /> : <UserCircle2 size={32} />}
           </div>
           <h1 className="text-2xl font-bold text-slate-800">
-            {isAdminMode ? 'Admin Control' : 'WordCloud กิจกรรมเสาร์สิ้นเดือนมกราคม 2026'}
+            {isAdminMode ? 'Admin Control' : 'กิจกรรมเสาร์สิ้นเดือนมกราคม 2026'}
           </h1>
           <p className="text-slate-500 mt-2 text-sm">
             {isAdminMode ? 'จัดการกิจกรรม' : 'เข้าร่วมกิจกรรม'}

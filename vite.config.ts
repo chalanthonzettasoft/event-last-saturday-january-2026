@@ -6,11 +6,13 @@ import react from "@vitejs/plugin-react";
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ".", "");
   
-  let commitHash = "unknown";
-  try {
-    commitHash = execSync("git rev-parse --short HEAD").toString().trim();
-  } catch (e) {
-    console.warn("Could not get git commit hash", e);
+  let commitHash = env.VITE_GIT_COMMIT_HASH || "unknown";
+  if (commitHash === "unknown") {
+    try {
+      commitHash = execSync("git rev-parse --short HEAD").toString().trim();
+    } catch (e) {
+      console.warn("Could not get git commit hash", e);
+    }
   }
 
   return {

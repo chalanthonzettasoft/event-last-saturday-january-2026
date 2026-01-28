@@ -32,14 +32,17 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm ci
 
       - name: Build with Vite
         run: npm run build
+        env:
+          VITE_GIT_COMMIT_HASH: ${{ github.sha }}
+          VITE_BASE_PATH: /event-last-saturday-january-2026/
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -47,7 +50,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: './dist'
+          path: "./dist"
 
   # Deployment job
   deploy:

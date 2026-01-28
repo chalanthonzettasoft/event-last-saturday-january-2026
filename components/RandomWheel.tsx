@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { X, Dices, RotateCcw, Trash2 } from 'lucide-react';
 import { WheelState } from '../types';
-import { playSfx } from '../services/audioService';
+import { useModal } from './ModalProvider';
 
 interface RandomWheelProps {
   isAdmin: boolean;
@@ -11,6 +11,7 @@ interface RandomWheelProps {
 }
 
 const RandomWheel: React.FC<RandomWheelProps> = ({ isAdmin, state, onUpdateState, onClose }) => {
+  const { showAlert, showConfirm } = useModal();
   // Local visual state for spinning animation when syncing
   const [visualResult, setVisualResult] = useState<number | null>(state.currentResult);
   const wasSpinningRef = React.useRef(state.isSpinning);
@@ -45,10 +46,10 @@ const RandomWheel: React.FC<RandomWheelProps> = ({ isAdmin, state, onUpdateState
     return () => clearInterval(interval);
   }, [state.isSpinning, state.min, state.max]);
 
-  const handleSpin = () => {
+  const handleSpin = async () => {
     if (state.isSpinning || !isAdmin) return;
     if (availableNumbers.length === 0) {
-      alert("สุ่มครบทุกตัวเลขแล้ว! กรุณาล้างประวัติเพื่อเริ่มใหม่");
+      await showAlert("สุ่มครบทุกตัวเลขแล้ว! กรุณาล้างประวัติเพื่อเริ่มใหม่", { type: 'warning' });
       return;
     }
 
@@ -69,8 +70,9 @@ const RandomWheel: React.FC<RandomWheelProps> = ({ isAdmin, state, onUpdateState
     }, 2000); // 2 seconds spin
   };
 
-  const handleClearHistory = () => {
-    if (confirm("ล้างประวัติการสุ่มทั้งหมด?")) {
+  const handleClearHistory = async () => {
+    const confirm = await showConfirm("ล้างประวัติการสุ่มทั้งหมด?", { type: 'warning', confirmText: 'ล้างประวัติ' });
+    if (confirm) {
       onUpdateState({ history: [], currentResult: null });
     }
   };

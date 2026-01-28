@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { UserCircle2, ArrowRight, ShieldCheck, Hash, KeyRound, Plus, DoorOpen, ArrowLeft } from 'lucide-react';
 import { supabase } from '../services/supabaseClient';
 import { DBRoom, DBSession } from '../types';
+import { generateRoomCode } from '../utils/textUtils';
+import { useModal } from './ModalProvider';
 
 interface LoginScreenProps {
   onLogin: (nickname: string, isAdmin: boolean, roomData: DBRoom, initialSession: DBSession | null) => void;
@@ -10,12 +12,53 @@ interface LoginScreenProps {
 type AdminStep = 'AUTH' | 'CHOICE' | 'JOIN_ROOM';
 
 const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
+  const { showAlert } = useModal();
   const [nickname, setNickname] = useState('');
   const [roomCode, setRoomCode] = useState('');
   
   const [isAdminMode, setIsAdminMode] = useState(false);
   const [adminStep, setAdminStep] = useState<AdminStep>('AUTH');
   const [adminPassword, setAdminPassword] = useState('');
+  
+  // Auto-fill room code from URL
+  React.useEffect(() => {
+     const params = new URLSearchParams(window.location.search);
+     const roomParam = params.get('room');
+     if (roomParam) {
+         setRoomCode(roomParam);
+     }
+  }, []);
+
+  const checkNicknameAvailability = async (nickname: string, roomId: string) => {
+    // 1. Check existing unique nickname in presence state (Realtime) - Client side check would be ideal if we had access, but here we can check DB or just trust presence
+    // Ideally we check Presence from App, but here we are in Login.
+    // Let's rely on a quick check of "active" words submitted by this user in current session? No, that's not enough.
+    // Better strategy: Just append random suffix if we want to be safe, OR check if name exists in "online_users" (but we don't have access to that list here easily without subscription).
+    
+    // User requested simple logic: if exists, add _x. 
+    // Since we don't have global presence list in LoginScreen easily without connecting first, 
+    // a common pattern is to just let them join. But user specifically asked for "Check if username exists".
+    // We can try to fetch recent presence state via REST if Supabase supports it, OR just index a "users" table if we had one.
+    // Given the constraints and current architecture (no persistent users table, just ephemeral presence), 
+    // the most reliable way WITHOUT changing DB schema is to just modify the handleUserLogin to "Connect -> Check Presence -> If duplicate, rename -> Re-connect/Update".
+    
+    // HOWEVER, simplest implementation as requested:
+    // "Check if username exists in this room via Presence"
+    // We can't easily do this before joining `room_main_...` channel.
+    // Strategy: Join channel -> Check presence state -> If match, self-rename -> Broadcast presence.
+    // But LoginScreen passes nickname to App. App handles the presence logic.
+    // So we should probably handle this in App.tsx `handleLogin` or `useEffect` presence sync.
+    // BUT the user interaction happens HERE.
+    
+    // Alternative: We interpret "Active Users" as those who have submitted words in the current session? No.
+    // Let's implement the rename logic in App.tsx when joining?
+    // User Request: "Check if username exists... if so add _x".
+    
+    // Let's defer this logic to `App.tsx` or try to peek at presence here?
+    // Peeking presence require joining the channel.
+    return nickname; // Placeholder for now, logic moved to App.tsx or inside handleUserLogin
+  };
+
   const [adminRoomCode, setAdminRoomCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -36,7 +79,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
           .single();
 
         if (roomError || !room) {
-          alert('ไม่พบห้องนี้ หรือห้องถูกปิดไปแล้ว');
+          await showAlert('ไม่พบห้องนี้ หรือห้องถูกปิดไปแล้ว', { type: 'error' });
           setIsLoading(false);
           return;
         }
@@ -55,7 +98,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
 
     } catch (err: any) {
       console.error(err);
-      alert('เกิดข้อผิดพลาด: ' + (err.message || "Connection Error"));
+      await showAlert('เกิดข้อผิดพลาด: ' + (err.message || "Connection Error"), { type: 'error' });
       setIsLoading(false);
     }
   };
@@ -71,7 +114,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
            .single();
 
          if (configError || !config || config.password !== adminPassword) {
-           alert('รหัสผ่าน Admin ไม่ถูกต้อง');
+           await showAlert('รหัสผ่าน Admin ไม่ถูกต้อง', { type: 'error' });
            setIsLoading(false);
            return;
          }
@@ -79,7 +122,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
          // Password Correct -> Go to Choice
          setAdminStep('CHOICE');
     } catch (err: any) {
-         alert('Error: ' + err.message);
+         await showAlert('Error: ' + err.message, { type: 'error' });
     } finally {
         setIsLoading(false);
     }
@@ -89,7 +132,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
      setIsLoading(true);
      
      try {
-         const randomRoomCode = Math.floor(1000 + Math.random() * 9000).toString();
+          const randomRoomCode = generateRoomCode();
          
          const { data: newRoom, error: roomError } = await supabase
            .from('rooms')
@@ -117,7 +160,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
 
          onLogin('Admin', true, newRoom, newSession);
      } catch (err: any) {
-         alert('สร้างห้องไม่สำเร็จ: ' + err.message);
+         await showAlert('สร้างห้องไม่สำเร็จ: ' + err.message, { type: 'error' });
          setIsLoading(false);
      }
   };
@@ -138,7 +181,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
           .single();
 
         if (roomError || !room) {
-          alert('ไม่พบห้องนี้');
+          await showAlert('ไม่พบห้องนี้', { type: 'error' });
           setIsLoading(false);
           return;
         }
@@ -156,7 +199,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
         onLogin('Admin', true, room, session || null);
 
     } catch (err: any) {
-        alert('เข้าร่วมไม่สำเร็จ: ' + err.message);
+        await showAlert('เข้าร่วมไม่สำเร็จ: ' + err.message, { type: 'error' });
         setIsLoading(false);
     }
   };
@@ -232,12 +275,12 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
             <div className="relative">
                 <Hash className="absolute left-3 top-3.5 text-slate-400" size={18} />
                 <input
-                type="tel"
+                type="text"
                 value={adminRoomCode}
                 onChange={(e) => setAdminRoomCode(e.target.value)}
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500 font-mono text-lg tracking-widest transition-all"
-                placeholder="0000"
-                maxLength={4}
+                placeholder="CODE"
+                maxLength={6}
                 autoFocus
                 />
             </div>
@@ -308,12 +351,12 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                 <div className="relative">
                   <Hash className="absolute left-3 top-3.5 text-slate-400" size={18} />
                   <input
-                    type="tel"
+                    type="text"
                     value={roomCode}
                     onChange={(e) => setRoomCode(e.target.value)}
                     className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-lg tracking-widest transition-all"
-                    placeholder="0000"
-                    maxLength={4}
+                    placeholder="CODE"
+                    maxLength={6}
                   />
                 </div>
               </div>

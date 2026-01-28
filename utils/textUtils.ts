@@ -45,3 +45,17 @@ export const generateId = (): string => {
     return v.toString(16);
   });
 };
+
+/**
+ * Generate a 6-character alphanumeric room code (A-Z, 0-9).
+ * Avoids 0/O, 1/I confusion? User just said A-Z, 0-9.
+ * Let's stick to standard uppercase alphanumeric.
+ */
+export const generateRoomCode = (): string => {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  let result = '';
+  for (let i = 0; i < 6; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+};

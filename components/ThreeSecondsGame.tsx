@@ -3,6 +3,8 @@ import * as d3 from 'd3';
 import { Settings, Play, Upload, Trophy, RotateCcw } from 'lucide-react';
 import { ThreeSecConfig } from '../types';
 
+import { useModal } from './ModalProvider';
+
 interface ThreeSecondsGameProps {
   isAdmin: boolean;
   onBroadcastState: (state: Partial<ThreeSecConfig>) => void;
@@ -10,6 +12,7 @@ interface ThreeSecondsGameProps {
 }
 
 const ThreeSecondsGame: React.FC<ThreeSecondsGameProps> = ({ isAdmin, onBroadcastState, syncedConfig }) => {
+  const { showConfirm } = useModal();
   // --- Local State (Admin owns the truth) ---
   const [activeTab, setActiveTab] = useState<'PLAY' | 'SETUP'>('PLAY');
   const [rawText, setRawText] = useState('');
@@ -19,6 +22,7 @@ const ThreeSecondsGame: React.FC<ThreeSecondsGameProps> = ({ isAdmin, onBroadcas
     currentQuestionIndex: null,
     targetIndex: null,
     isSpinning: false,
+    showingResult: false
   });
   const [isLoaded, setIsLoaded] = useState(false);
 
@@ -28,7 +32,6 @@ const ThreeSecondsGame: React.FC<ThreeSecondsGameProps> = ({ isAdmin, onBroadcas
   // --- Initialization & LocalStorage ---
   useEffect(() => {
     if (isAdmin) {
-      // Restore from LocalStorage
       const saved = localStorage.getItem('3sec_config');
       if (saved) {
         try {
@@ -43,18 +46,14 @@ const ThreeSecondsGame: React.FC<ThreeSecondsGameProps> = ({ isAdmin, onBroadcas
     }
   }, [isAdmin]);
 
-  // Sync state for non-admins
-  const displayConfig = isAdmin ? config : (syncedConfig || config);
-
-  // Save to LocalStorage (Admin only)
   useEffect(() => {
     if (isAdmin && isLoaded) {
-      const toSave = { ...config, isSpinning: false }; // Don't save spinning state
+      const toSave = { ...config, isSpinning: false };
       localStorage.setItem('3sec_config', JSON.stringify(toSave));
     }
   }, [config, isAdmin, isLoaded]);
 
-  // --- Sound Logic (Win Sound only - using random SFX) ---
+  const displayConfig = isAdmin ? config : (syncedConfig || config);
   const prevSpinning = useRef(displayConfig.isSpinning);
   
   useEffect(() => {
@@ -62,102 +61,142 @@ const ThreeSecondsGame: React.FC<ThreeSecondsGameProps> = ({ isAdmin, onBroadcas
     prevSpinning.current = displayConfig.isSpinning;
   }, [displayConfig.isSpinning, displayConfig.currentQuestionIndex, isAdmin]);
 
-  // --- Wheel D3 Logic ---
+  // Wheel D3 Logic
   useEffect(() => {
     if (!svgRef.current) return;
     
-    const count = displayConfig.questions.length || 8; // Default segments if empty for visual
-    const data = Array.from({ length: count }, (_, i) => i + 1);
+    // Clear previous
+    const svg = d3.select(svgRef.current);
+    svg.selectAll('*').remove();
     
     const width = 400;
     const height = 400;
-    const radius = Math.min(width, height) / 2;
-
-    const svg = d3.select(svgRef.current);
-    svg.selectAll("*").remove();
-
-    const container = svg.append("g").attr("transform", `translate(${width / 2},${height / 2})`);
+    svg.attr('viewBox', `0 0 ${width} ${height}`);
     
-    // Create the wheel group that will rotate
-    const wheelGroup = container.append("g").attr("class", "wheel-group");
+    const radius = Math.min(width, height) / 2;
+    
+    const container = svg.append('g')
+      .attr('transform', `translate(${width/2},${height/2})`);
+      
+    // Background circle
+    container.append('circle')
+      .attr('r', radius - 5)
+      .attr('fill', '#fff')
+      .attr('stroke', '#cbd5e1')
+      .attr('stroke-width', '4px');
 
-    const color = d3.scaleOrdinal(d3.schemeSet3);
-    const pie = d3.pie<number>().value(1).sort(null);
-    const arc = d3.arc<d3.PieArcDatum<number>>().innerRadius(40).outerRadius(radius - 10);
-
-    const arcs = wheelGroup.selectAll("arc")
+    const data = displayConfig.questions.length > 0 ? displayConfig.questions : ['Waiting...', 'Waiting...', 'Waiting...'];
+    
+    const pie = d3.pie<string>()
+      .value(1)
+      .sort(null);
+      
+    const arc = d3.arc<d3.PieArcDatum<string>>()
+      .innerRadius(0)
+      .outerRadius(radius - 20);
+      
+    // Colors (using a nicer palette)
+    const colors = [
+        '#ef4444', '#f97316', '#f59e0b', '#84cc16', '#10b981', 
+        '#06b6d4', '#3b82f6', '#6366f1', '#8b5cf6', '#d946ef', '#f43f5e'
+    ];
+    
+    const arcs = container.selectAll('arc')
       .data(pie(data))
       .enter()
-      .append("g")
-      .attr("class", "arc");
-
-    arcs.append("path")
-      .attr("d", arc as any)
-      .attr("fill", (d, i) => {
-         // Dim used numbers
-         if (displayConfig.history.includes(i)) return "#cbd5e1"; 
-         return color(i.toString()) as string;
+      .append('g')
+      .attr('class', 'arc');
+      
+    // Wheel Slices
+    arcs.append('path')
+      .attr('d', arc as any)
+      .attr('fill', (d, i) => colors[i % colors.length])
+      .attr('stroke', 'white')
+      .style('stroke-width', '2px');
+      
+    // Text Labels
+    arcs.append('text')
+      .attr('transform', d => {
+        const [x, y] = arc.centroid(d as any);
+        const angle = (d.startAngle + d.endAngle) / 2 * 180 / Math.PI;
+         // Adjust rotation so text reads outwards
+        return `translate(${x},${y}) rotate(${angle + 90})`; 
       })
-      .attr("stroke", "white")
-      .attr("stroke-width", "2px");
-
-    arcs.append("text")
-      .attr("transform", (d) => {
-        const _d = arc.centroid(d as any);
-        return `translate(${_d[0] * 1.5},${_d[1] * 1.5})`; 
+      .attr('dy', '0.35em')
+      .text(d => {
+          // Display Number (Index + 1) instead of Text for suspense
+          return (d.index + 1).toString();
       })
-      .attr("dy", ".35em")
-      .text(d => d.data)
-      .attr("text-anchor", "middle")
-      .attr("font-weight", "bold")
-      .attr("fill", "#334155")
-      .attr("font-size", count > 20 ? "10px" : "16px");
-
-    // Static Arrow Indicator (Pointing Down from Top)
-    // Triangle pointing down at (0, -radius)
-    container.append("path")
-       .attr("d", "M -10 -170 L 10 -170 L 0 -150 Z") // Adjust position based on radius
-       .attr("transform", `translate(0, -20)`) 
-       .attr("fill", "#f43f5e")
-       .attr("stroke", "#881337")
-       .attr("stroke-width", 2);
-       
-    // --- Spin Animation ---
-    if (displayConfig.isSpinning && displayConfig.targetIndex !== undefined && displayConfig.targetIndex !== null) {
-       const targetIndex = displayConfig.targetIndex;
-       const anglePerSlice = 360 / count;
-       // Calculate rotation to center the target slice at the top (0 degrees - or -90?)
-       // D3 pie normally starts at 12 o'clock. Center of slice i is (i + 0.5) * anglePerSlice.
-       // We want (i + 0.5) * anglePerSlice + rotation = 0 (mod 360)
-       // So rotation = -(i + 0.5) * anglePerSlice
-       
-       const targetAngle = (targetIndex + 0.5) * anglePerSlice;
-       const rounds = 5; // Spin 5 times
-       const totalRotation = 360 * rounds - targetAngle;
-
-       wheelGroup.transition()
-         .duration(3500)
-         .ease(d3.easeCubicOut)
-         .attrTween("transform", function() {
-           return d3.interpolateString("rotate(0)", `rotate(${totalRotation})`);
-         })
-         .on("end", () => {
-             // Logic handled by Admin timeout, but visual end needs to persist rotation
-             // However, on re-render, this will reset if isSpinning becomes false
-             // We need to handle static rotation state or relies on re-render
-         });
+      .attr('text-anchor', 'middle')
+      .attr('fill', 'white')
+      .style('font-size', '20px')
+      .style('font-weight', '900')
+      .style('text-shadow', '0 2px 4px rgba(0,0,0,0.5)');
+      
+    // Arrow Indicator (Top)
+    // In D3 group transform(0,0) is center. Top is (0, -radius).
+    svg.append('path')
+      .attr('d', `M ${width/2} 10 L ${width/2 - 15} 40 L ${width/2 + 15} 40 Z`) 
+      .attr('fill', '#334155') 
+      .attr('stroke', 'white')
+      .attr('stroke-width', '2px')
+      .style('filter', 'drop-shadow(0 4px 6px rgba(0,0,0,0.3))');
+      
+    // Spin Logic
+    if (displayConfig.isSpinning && displayConfig.targetIndex !== null) {
+          const sliceAngle = 360 / data.length;
+          // Target is at index. Top is 0 degrees? default pie starts at 12 o'clock? 
+          // D3 pie starts at 12 o'clock (0 rad).
+          // We want the target slice to end up under the arrow (Top).
+          // Arrow is at 0 degrees.
+          // Slice center angle for target index I:
+          // startAngle + (endAngle - startAngle)/2
+          // We need to rotate the whole wheel such that this angle aligns with 0 (mod 360).
+          // Actually we rotate negative amount.
+          
+          // Let's rely on simple slice calculation:
+          // Angle per slice = 360/N.
+          // Target Angle = index * Angle + Angle/2.
+          // We want to rotate so Target Angle is at 0 (or 360).
+          // Required Rotation = 360 - Target Angle.
+          // Add extra spins (5 * 360).
+          
+          const anglePerSlice = 360 / data.length;
+          // D3 generated angles are in Radians.
+          // 0 is Top-Center (12 o'clock) for D3.arc defaults? No.
+          // Default startAngle is 0 (12 o'clock).
+          // So Index 0 is at [0, angle]. Center is angle/2.
+          // We want Index 0 to be at Top?
+          // If we rotate G by - (angle/2), Index 0 is centered at Top.
+          // Target Index I: Center is I*angle + angle/2.
+          // We want to rotate by - (I*angle + angle/2).
+          // Add 360s.
+          // Result: 360*5 - (targetIndex * anglePerSlice + anglePerSlice/2).
+          
+          const targetRotation = 360 * 5 - (displayConfig.targetIndex * anglePerSlice + anglePerSlice / 2);
+          
+          container.transition()
+           .duration(3000)
+           .ease(d3.easeCubicOut)
+           .attrTween('transform', function() {
+              const i = d3.interpolateString(`translate(${width/2},${height/2}) rotate(0)`, `translate(${width/2},${height/2}) rotate(${targetRotation})`);
+              return function(t) { return i(t); };
+           });
+           
     } else if (displayConfig.currentQuestionIndex !== null) {
-       // Show result position
-       const targetIndex = displayConfig.currentQuestionIndex;
-       const anglePerSlice = 360 / count;
-       const targetAngle = (targetIndex + 0.5) * anglePerSlice;
-       const finalRotation = 360 - targetAngle; // Normalize to 0-360
-       wheelGroup.attr("transform", `rotate(${finalRotation})`);
+        // Static Result Position
+        const anglePerSlice = 360 / data.length;
+        const targetRotation = 360 - (displayConfig.currentQuestionIndex * anglePerSlice + anglePerSlice / 2);
+        // Normalize to 0-360
+        container.attr('transform', `translate(${width/2},${height/2}) rotate(${targetRotation % 360})`);
+    } else {
+         // Idle rotation (slow spin?) or just static
+         // container.attr('transform', `translate(${width/2},${height/2}) rotate(0)`);
     }
 
-  }, [displayConfig.questions.length, displayConfig.history, displayConfig.isSpinning, displayConfig.targetIndex, displayConfig.currentQuestionIndex]);
+  }, [displayConfig, isAdmin]);
 
-  // --- Handlers (Admin) ---
+  // ...
 
   const handleImport = () => {
     const lines = rawText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
@@ -174,14 +213,15 @@ const ThreeSecondsGame: React.FC<ThreeSecondsGameProps> = ({ isAdmin, onBroadcas
     setActiveTab('PLAY');
   };
 
-  const handleSpin = () => {
+  const handleSpin = async () => {
     if (config.isSpinning || config.questions.length === 0) return;
     
     // Filter available indices
     const availableIndices = config.questions.map((_, i) => i).filter(i => !config.history.includes(i));
     
     if (availableIndices.length === 0) {
-      if (confirm("สุ่มครบทุกข้อแล้ว! ต้องการรีเซ็ตประวัติหรือไม่?")) {
+      const confirmReset = await showConfirm("สุ่มครบทุกข้อแล้ว! ต้องการรีเซ็ตประวัติหรือไม่?", { type: 'warning', confirmText: 'รีเซ็ต' });
+      if (confirmReset) {
         handleResetHistory();
       }
       return;

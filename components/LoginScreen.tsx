@@ -277,7 +277,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                 <input
                 type="text"
                 value={adminRoomCode}
-                onChange={(e) => setAdminRoomCode(e.target.value)}
+                onChange={(e) => setAdminRoomCode(e.target.value.toUpperCase())}
                 className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500 font-mono text-lg tracking-widest transition-all"
                 placeholder="CODE"
                 maxLength={6}
@@ -353,7 +353,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                   <input
                     type="text"
                     value={roomCode}
-                    onChange={(e) => setRoomCode(e.target.value)}
+                    onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
                     className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-lg tracking-widest transition-all"
                     placeholder="CODE"
                     maxLength={6}

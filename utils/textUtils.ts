@@ -52,7 +52,7 @@ export const generateId = (): string => {
  * Let's stick to standard uppercase alphanumeric.
  */
 export const generateRoomCode = (): string => {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ123456789'; // No 0 to avoid confusion with O
   let result = '';
   for (let i = 0; i < 6; i++) {
     result += chars.charAt(Math.floor(Math.random() * chars.length));

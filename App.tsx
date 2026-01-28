@@ -890,13 +890,13 @@ const App: React.FC = () => {
         />
       )}
       {showRoomCodeModal && currentRoom && (
-        <div className="fixed inset-0 z-[70] bg-white flex flex-col items-center justify-center p-8 animate-in zoom-in-95 duration-200" onClick={() => setShowRoomCodeModal(false)}>
-            <div className="flex flex-col items-center gap-8 cursor-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[70] bg-white flex flex-col items-center justify-center p-8 animate-in zoom-in-95 duration-200 cursor-pointer" onClick={() => setShowRoomCodeModal(false)}>
+            <div className="flex flex-col items-center gap-8 cursor-pointer">
                 <h1 className="text-8xl md:text-[15rem] font-black text-indigo-600 leading-none drop-shadow-2xl select-none">{currentRoom.code}</h1>
                 <div className="bg-white p-4 rounded-xl shadow-lg border border-indigo-100">
-                    <QRCodeCanvas value={`${window.location.origin}?room=${currentRoom.code}`} size={256} />
+                    <QRCodeCanvas value={`${window.location.origin}${import.meta.env.BASE_URL}?room=${currentRoom.code}`} size={256} />
                 </div>
-                <p className="text-xl text-slate-400 font-bold animate-pulse cursor-pointer mt-4" onClick={() => setShowRoomCodeModal(false)}>แตะเพื่อปิด</p>
+                <p className="text-xl text-slate-400 font-bold animate-pulse mt-4">แตะที่ใดก็ได้เพื่อปิด</p>
             </div>
         </div>
       )}

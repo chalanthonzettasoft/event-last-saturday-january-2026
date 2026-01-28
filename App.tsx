@@ -3,12 +3,12 @@ import { ViewMode, WordEntry, WheelState, DBSession, DBRoom, Session, GameMode, 
 import WordCloudChart from './components/WordCloudChart';
 import WordList from './components/WordList';
 import LoginScreen from './components/LoginScreen';
-import RandomWheel from './components/RandomWheel';
+import RandomNumber from './components/RandomNumber';
 import SessionHistory from './components/SessionHistory';
 import ThreeSecondsGame from './components/ThreeSecondsGame';
 import AudioController from './components/AudioController';
 import { supabase, isSupabaseConfigured } from './services/supabaseClient';
-import { groupWordsWithLocalAI, WordGroup, isModelReady } from './services/localGroupingService';
+import { groupWordsWithLocalAI, isModelReady } from './services/localGroupingService';
 import { normalizeForGrouping, getBestDisplayText, generateId } from './utils/textUtils';
 import { useModal } from './components/ModalProvider';
 
@@ -672,7 +672,7 @@ const App: React.FC = () => {
                   {isAdmin ? <Settings size={18} /> : <BarChart3 size={18} />}
                 </div>
                 <div>
-                    <h1 className="font-bold text-slate-800 text-sm md:text-lg">WordCloud</h1>
+                    <h1 className="font-bold text-slate-800 text-sm md:text-lg">กิจกรรมเสาร์สิ้นเดือนมกราคม 2026</h1>
                     {isAdmin && (
                         <div className="flex items-center gap-2 mt-0.5">
                             <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${activeGame === '3_SECONDS' ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-slate-50 border-slate-200 text-slate-400'}`}>3 SECONDS</span>
@@ -681,7 +681,7 @@ const App: React.FC = () => {
                     )}
                 </div>
                 <button onClick={() => setShowRoomCodeModal(true)} className="ml-2 flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded text-xs font-mono font-bold text-slate-600 border border-slate-200">
-                   <Hash size={10} /> {currentRoom?.code} <Maximize2 size={8} />
+                    <Hash size={10} /> {currentRoom?.code} <Maximize2 size={8} />
                 </button>
 
             </div>
@@ -836,7 +836,7 @@ const App: React.FC = () => {
       )}
 
       {/* Modals */}
-      {wheelState.isOpen && <RandomWheel isAdmin={isAdmin} state={wheelState} onUpdateState={(p) => syncWheel({ ...wheelState, ...p })} onClose={() => syncWheel({ ...wheelState, isOpen: false })} />}
+      {wheelState.isOpen && <RandomNumber isAdmin={isAdmin} state={wheelState} onUpdateState={(p) => syncWheel({ ...wheelState, ...p })} onClose={() => syncWheel({ ...wheelState, isOpen: false })} />}
       {/* History Modal */}
       {showHistory && (
         <SessionHistory 

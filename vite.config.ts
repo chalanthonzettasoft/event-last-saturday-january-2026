@@ -5,7 +5,7 @@ import react from "@vitejs/plugin-react";
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ".", "");
   return {
-    base: env.VITE_BASE_PATH || "/wordcloud202601/",
+    base: env.VITE_BASE_PATH || "/event-last-saturday-january-2026/",
     publicDir: "static",
     server: {
       port: 3000,

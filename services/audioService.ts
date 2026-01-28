@@ -260,7 +260,7 @@ export const playSfx = (sfxId?: string) => {
   
   // Play SFX
   state.sfxAudio = new Audio(sfx.path);
-  state.sfxAudio.volume = 1;
+  state.sfxAudio.volume = 0.5;
   
   state.sfxAudio.addEventListener('ended', () => {
     // Restore BGM volume

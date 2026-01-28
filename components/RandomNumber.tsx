@@ -3,14 +3,14 @@ import { X, Dices, RotateCcw, Trash2 } from 'lucide-react';
 import { WheelState } from '../types';
 import { useModal } from './ModalProvider';
 
-interface RandomWheelProps {
+interface RandomNumberProps {
   isAdmin: boolean;
   state: WheelState;
   onUpdateState: (newState: Partial<WheelState>) => void;
   onClose: () => void;
 }
 
-const RandomWheel: React.FC<RandomWheelProps> = ({ isAdmin, state, onUpdateState, onClose }) => {
+const RandomNumber: React.FC<RandomNumberProps> = ({ isAdmin, state, onUpdateState, onClose }) => {
   const { showAlert, showConfirm } = useModal();
   // Local visual state for spinning animation when syncing
   const [visualResult, setVisualResult] = useState<number | null>(state.currentResult);
@@ -203,4 +203,4 @@ const RandomWheel: React.FC<RandomWheelProps> = ({ isAdmin, state, onUpdateState
   );
 };
 
-export default RandomWheel;
+export default RandomNumber;

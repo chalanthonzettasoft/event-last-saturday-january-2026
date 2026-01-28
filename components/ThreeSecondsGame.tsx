@@ -4,6 +4,7 @@ import { Settings, Play, Upload, Trophy, RotateCcw } from 'lucide-react';
 import { ThreeSecConfig } from '../types';
 
 import { useModal } from './ModalProvider';
+import * as audioService from '../services/audioService';
 
 interface ThreeSecondsGameProps {
   isAdmin: boolean;
@@ -133,10 +134,9 @@ const ThreeSecondsGame: React.FC<ThreeSecondsGameProps> = ({ isAdmin, onBroadcas
       .style('font-weight', '900')
       .style('text-shadow', '0 2px 4px rgba(0,0,0,0.5)');
       
-    // Arrow Indicator (Top)
-    // In D3 group transform(0,0) is center. Top is (0, -radius).
+    // Arrow Indicator (Top - Pointing DOWN into the wheel)
     svg.append('path')
-      .attr('d', `M ${width/2} 10 L ${width/2 - 15} 40 L ${width/2 + 15} 40 Z`) 
+      .attr('d', `M ${width/2} 40 L ${width/2 - 15} 10 L ${width/2 + 15} 10 Z`) 
       .attr('fill', '#334155') 
       .attr('stroke', 'white')
       .attr('stroke-width', '2px')
@@ -258,6 +258,10 @@ const ThreeSecondsGame: React.FC<ThreeSecondsGameProps> = ({ isAdmin, onBroadcas
       
       setConfig(endState);
       onBroadcastState(endState);
+      
+      if (isAdmin) {
+          audioService.playSfx();
+      }
     }, 3500);
   };
 

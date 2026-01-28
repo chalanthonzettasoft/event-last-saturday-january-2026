@@ -924,6 +924,11 @@ const App: React.FC = () => {
 
       {/* Audio Controller (Admin Only) */}
       <AudioController isAdmin={isAdmin} />
+      
+      {/* Version Tag */}
+      <div className="fixed bottom-2 right-2 text-[10px] text-slate-400 font-mono pointer-events-none select-none z-0">
+          commit: {__COMMIT_HASH__}
+      </div>
     </div>
   );
 };

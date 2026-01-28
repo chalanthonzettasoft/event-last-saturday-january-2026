@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { X, Dices, RotateCcw, Trash2 } from 'lucide-react';
 import { WheelState } from '../types';
+import { playSfx } from '../services/audioService';
 
 interface RandomWheelProps {
   isAdmin: boolean;
@@ -12,6 +13,7 @@ interface RandomWheelProps {
 const RandomWheel: React.FC<RandomWheelProps> = ({ isAdmin, state, onUpdateState, onClose }) => {
   // Local visual state for spinning animation when syncing
   const [visualResult, setVisualResult] = useState<number | null>(state.currentResult);
+  const wasSpinningRef = React.useRef(state.isSpinning);
 
   // Calculate available numbers
   const availableNumbers = useMemo(() => {
@@ -22,11 +24,14 @@ const RandomWheel: React.FC<RandomWheelProps> = ({ isAdmin, state, onUpdateState
     return allNumbers.filter(n => !state.history.includes(n));
   }, [state.min, state.max, state.history]);
 
-  // Sync visual result with prop state
+  // Sync visual result with prop state and play SFX when result is announced
   useEffect(() => {
     if (!state.isSpinning) {
         setVisualResult(state.currentResult);
+        
+        // SFX disabled by request
     }
+    wasSpinningRef.current = state.isSpinning;
   }, [state.currentResult, state.isSpinning]);
 
   // Local spinning effect for Users (visual only)

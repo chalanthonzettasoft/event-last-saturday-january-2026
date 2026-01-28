@@ -6,6 +6,7 @@ import LoginScreen from './components/LoginScreen';
 import RandomWheel from './components/RandomWheel';
 import SessionHistory from './components/SessionHistory';
 import ThreeSecondsGame from './components/ThreeSecondsGame';
+import AudioController from './components/AudioController';
 import { supabase, isSupabaseConfigured } from './services/supabaseClient';
 import { groupWordsWithLocalAI, WordGroup, isModelReady } from './services/localGroupingService';
 import { normalizeForGrouping, getBestDisplayText, generateId } from './utils/textUtils';
@@ -47,7 +48,7 @@ const App: React.FC = () => {
   // --- Room & Game State ---
   const [currentRoom, setCurrentRoom] = useState<DBRoom | null>(null);
   const [currentSession, setCurrentSession] = useState<DBSession | null>(null);
-  const [activeGame, setActiveGame] = useState<GameMode>('WORD_CLOUD'); // Default Game
+  const [activeGame, setActiveGame] = useState<GameMode>('3_SECONDS'); // Default Game
   
   // --- 3 Seconds Game State (Synced) ---
   const [threeSecState, setThreeSecState] = useState<ThreeSecConfig | undefined>(undefined);
@@ -254,13 +255,31 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (!currentSession || !isSupabaseConfigured()) return;
+    
+    // Initial Fetch
     fetchWords(currentSession.id);
     setTopic(currentSession.topic);
+
+    // 1. Realtime Subscription (Restored filtered version)
     const wordChannel = supabase.channel(`words_session_${currentSession.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'words' }, () => fetchWords(currentSession.id))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'words', filter: `session_id=eq.${currentSession.id}` }, () => {
+          fetchWords(currentSession.id);
+      })
       .subscribe();
-    return () => { supabase.removeChannel(wordChannel); };
-  }, [currentSession, fetchWords]);
+
+    // 2. Admin Auto-Reload (Every 3 Seconds) - Specific User Request
+    let intervalId: NodeJS.Timeout;
+    if (isAdmin && activeGame === 'WORD_CLOUD') {
+        intervalId = setInterval(() => {
+            fetchWords(currentSession.id);
+        }, 3000);
+    }
+
+    return () => { 
+        supabase.removeChannel(wordChannel);
+        if (intervalId) clearInterval(intervalId);
+    };
+  }, [currentSession, fetchWords, isAdmin, activeGame]);
 
   useEffect(() => {
     if (currentUser) {
@@ -438,14 +457,15 @@ const App: React.FC = () => {
                     <h1 className="font-bold text-slate-800 text-sm md:text-lg">WordCloud</h1>
                     {isAdmin && (
                         <div className="flex items-center gap-2 mt-0.5">
-                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${activeGame === 'WORD_CLOUD' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-400'}`}>WORD CLOUD</span>
                             <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${activeGame === '3_SECONDS' ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-slate-50 border-slate-200 text-slate-400'}`}>3 SECONDS</span>
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${activeGame === 'WORD_CLOUD' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-slate-50 border-slate-200 text-slate-400'}`}>WORD CLOUD</span>
                         </div>
                     )}
                 </div>
                 <button onClick={() => setShowRoomCodeModal(true)} className="ml-2 flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded text-xs font-mono font-bold text-slate-600 border border-slate-200">
                    <Hash size={10} /> {currentRoom?.code} <Maximize2 size={8} />
                 </button>
+
             </div>
             
             <div className="flex items-center gap-2 justify-end">
@@ -468,16 +488,16 @@ const App: React.FC = () => {
                 {/* Game Switcher */}
                 <div className="flex bg-slate-100 p-1 rounded-lg w-full md:w-fit">
                     <button 
-                        onClick={() => handleSwitchGame('WORD_CLOUD')}
-                        className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-1.5 rounded-md text-sm font-bold transition-all ${activeGame === 'WORD_CLOUD' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                    >
-                        <Cloud size={16} /> Word Cloud
-                    </button>
-                    <button 
                          onClick={() => handleSwitchGame('3_SECONDS')}
                          className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-1.5 rounded-md text-sm font-bold transition-all ${activeGame === '3_SECONDS' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                     >
                         <Timer size={16} /> 3 Seconds
+                    </button>
+                    <button 
+                        onClick={() => handleSwitchGame('WORD_CLOUD')}
+                        className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-1.5 rounded-md text-sm font-bold transition-all ${activeGame === 'WORD_CLOUD' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                    >
+                        <Cloud size={16} /> Word Cloud
                     </button>
                 </div>
 
@@ -497,7 +517,7 @@ const App: React.FC = () => {
                         )}
                         <div className="h-6 w-px bg-slate-200 hidden md:block"></div>
                         <button onClick={toggleShowResults} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${showResults ? 'bg-indigo-50 text-indigo-700' : 'bg-slate-100 text-slate-500'}`}>
-                            {showResults ? <Eye size={16} /> : <EyeOff size={16} />} <span className="hidden sm:inline">{showResults ? 'แสดงคำตอบ' : 'ซ่อนคำตอบ'}</span>
+                            {showResults ? <EyeOff size={16} /> : <Eye size={16} />} <span className="hidden sm:inline">{showResults ? 'ซ่อนคำตอบ' : 'แสดงคำตอบ'}</span>
                         </button>
                         <button onClick={() => syncWheel({ ...wheelState, isOpen: true })} className="flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium bg-amber-50 text-amber-700 hover:bg-amber-100">
                             <Dices size={16} /> <span className="hidden sm:inline">สุ่ม</span>
@@ -614,6 +634,9 @@ const App: React.FC = () => {
             </div>
         </div>
       )}
+
+      {/* Audio Controller (Admin Only) */}
+      <AudioController isAdmin={isAdmin} />
     </div>
   );
 };

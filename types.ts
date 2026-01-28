@@ -66,7 +66,9 @@ export interface ThreeSecConfig {
   questions: string[];
   history: number[]; // Store indices of used questions
   currentQuestionIndex: number | null;
+  targetIndex?: number | null; // For syncing spin result
   isSpinning: boolean;
+  showingResult: boolean; // For expanding the result modal
   soundSpinUrl?: string;
   soundWinUrl?: string;
 }

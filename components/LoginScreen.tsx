@@ -87,6 +87,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
 
   const createNewRoom = async () => {
      setIsLoading(true);
+     
      try {
          const randomRoomCode = Math.floor(1000 + Math.random() * 9000).toString();
          

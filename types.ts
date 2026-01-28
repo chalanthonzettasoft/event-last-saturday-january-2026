@@ -1,5 +1,7 @@
 import { SimulationNodeDatum } from 'd3';
 
+export type GameMode = 'WORD_CLOUD' | '3_SECONDS';
+
 export interface WordEntry {
   id: string;
   text: string;
@@ -57,4 +59,14 @@ export interface WheelState {
   history: number[];
   min: number;
   max: number;
+}
+
+// 3 Seconds Game Types
+export interface ThreeSecConfig {
+  questions: string[];
+  history: number[]; // Store indices of used questions
+  currentQuestionIndex: number | null;
+  isSpinning: boolean;
+  soundSpinUrl?: string;
+  soundWinUrl?: string;
 }

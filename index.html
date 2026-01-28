@@ -10,9 +10,34 @@
       body {
         font-family: 'Prompt', sans-serif;
       }
+      /* Custom Scrollbar */
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #f1f5f9; 
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #cbd5e1; 
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #94a3b8; 
+      }
     </style>
     
-    <!-- 1. Import Map -->
+    <!-- 1. Polyfills (Process) -->
+    <script>
+      window.global = window;
+      window.process = window.process || { 
+        env: { NODE_ENV: 'production' },
+        version: '',
+        nextTick: function(fn) { setTimeout(fn, 0); }
+      };
+    </script>
+
+    <!-- 2. Import Map -->
     <script type="importmap">
 {
   "imports": {
@@ -29,7 +54,7 @@
 </script>
     <link rel="stylesheet" href="/index.css">
   </head>
-  <body class="bg-slate-50 text-slate-900">
+  <body class="bg-slate-50 text-slate-900 overflow-x-hidden">
     <div id="root"></div>
     <script type="module" src="/index.tsx"></script>
   </body>

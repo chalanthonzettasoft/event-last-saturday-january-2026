@@ -8,7 +8,7 @@ import SessionHistory from './components/SessionHistory';
 import ThreeSecondsGame from './components/ThreeSecondsGame';
 import AudioController from './components/AudioController';
 import { supabase, isSupabaseConfigured } from './services/supabaseClient';
-import { groupWordsWithLocalAI, isModelReady } from './services/localGroupingService';
+import { groupWordsWithAI } from './services/geminiService';
 import { normalizeForGrouping, getBestDisplayText, generateId } from './utils/textUtils';
 import { useModal } from './components/ModalProvider';
 
@@ -546,18 +546,32 @@ const App: React.FC = () => {
     if (wantAI) {
         setIsAiProcessing(true);
         try {
-            if (!isModelReady()) await showAlert("กำลังโหลด AI Model...", { type: 'info' });
-            const groups = await groupWordsWithLocalAI(topic, words, 0.7);
+            // if (!isModelReady()) await showAlert("กำลังโหลด AI Model...", { type: 'info' });
+            // Using Gemini now
+            const groups = await groupWordsWithAI(topic, words);
             if (groups.length > 0) {
                  // Batch merge logic
                  for (const group of groups) {
                     const targetWords = words.filter(w => group.idsToMerge.includes(w.id));
                     if (targetWords.length === 0) continue;
+                    
                     const totalCount = targetWords.reduce((acc, curr) => acc + curr.count, 0);
                     const allSubmitters = targetWords.flatMap(w => w.submittedBy);
+                    
+                    // Create formatted text: "Master (Source1 + Source2)"
+                    const uniqueSources = Array.from(new Set(targetWords.map(w => w.text)));
+                    const combinedText = uniqueSources.length > 1 
+                        ? `${group.masterText} (${uniqueSources.join(' + ')})`
+                        : group.masterText;
+
                     const newId = generateId();
                     await supabase.from('words').insert({
-                        id: newId, session_id: currentSession?.id, text: group.masterText, normalized_text: normalizeForGrouping(group.masterText), count: totalCount, submitted_by: allSubmitters
+                        id: newId, 
+                        session_id: currentSession?.id, 
+                        text: combinedText, 
+                        normalized_text: normalizeForGrouping(group.masterText), 
+                        count: totalCount, 
+                        submitted_by: allSubmitters
                     });
                     await supabase.from('words').delete().in('id', group.idsToMerge);
                 }

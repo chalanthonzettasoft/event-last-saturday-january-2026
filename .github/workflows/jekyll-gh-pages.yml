@@ -43,6 +43,7 @@ jobs:
         env:
           VITE_GIT_COMMIT_HASH: ${{ github.sha }}
           VITE_BASE_PATH: /event-last-saturday-january-2026/
+          VITE_GOOGLE_API_KEY: ${{ secrets.VITE_GOOGLE_API_KEY }}
 
       - name: Setup Pages
         uses: actions/configure-pages@v5

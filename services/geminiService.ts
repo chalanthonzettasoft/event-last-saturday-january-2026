@@ -41,14 +41,48 @@ export interface WordGroup {
   idsToMerge: string[];
 }
 
-const getApiKeys = (): string[] => {
+// State for Key Rotation (Deck of Cards logic)
+let availableKeysPool: string[] = [];
+
+const getAllKeys = (): string[] => {
     const raw = import.meta.env.VITE_GOOGLE_API_KEY || '';
     return raw.split(',').map(k => k.trim()).filter(k => k.length > 0);
 };
 
+// Get one key using rotation logic + Failover candidates
+const getKeyStrategy = (): string[] => {
+    const allKeys = getAllKeys();
+    
+    if (allKeys.length === 0) return [];
+    
+    // Initialize pool if empty
+    if (availableKeysPool.length === 0) {
+        availableKeysPool = [...allKeys];
+        console.log("Gemini API Key Pool Resetted/Initialized", availableKeysPool.length);
+    }
+
+    // Pick a random index from the pool (Card Draw)
+    const randomIndex = Math.floor(Math.random() * availableKeysPool.length);
+    const primaryKey = availableKeysPool[randomIndex];
+    
+    // Remove from pool (Discard)
+    availableKeysPool.splice(randomIndex, 1);
+
+    // Prepare strategy: [Primary, ...RandomRest]
+    const otherKeys = allKeys.filter(k => k !== primaryKey);
+    // Shuffle others
+    for (let i = otherKeys.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [otherKeys[i], otherKeys[j]] = [otherKeys[j], otherKeys[i]];
+    }
+
+    return [primaryKey, ...otherKeys];
+}
+
 export const groupWordsWithAI = async (topic: string, words: WordEntry[]): Promise<WordGroup[]> => {
-  const apiKeys = getApiKeys();
-  if (apiKeys.length === 0) {
+  const attemptKeys = getKeyStrategy();
+
+  if (attemptKeys.length === 0) {
       throw new Error("Missing Google API Key. Please Add VITE_GOOGLE_API_KEY to .env (comma separated for multiple keys)");
   }
 
@@ -80,8 +114,8 @@ export const groupWordsWithAI = async (topic: string, words: WordEntry[]): Promi
 
   let lastError: any = null;
 
-  // Retry with each API key
-  for (const key of apiKeys) {
+  // Retry logic
+  for (const key of attemptKeys) {
       try {
           const genAI = new GoogleGenerativeAI(key);
           const model = genAI.getGenerativeModel({ 

@@ -1,92 +1,63 @@
-import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
+import { GoogleGenerativeAI, SchemaType, GenerationConfig } from "@google/generative-ai";
 import { WordEntry } from "../types";
 
-// Initialize AI Client
-// Using Vite env var
-const apiKey = import.meta.env.VITE_GOOGLE_API_KEY || '';
-const genAI = new GoogleGenerativeAI(apiKey);
-const model = genAI.getGenerativeModel({ 
-  /**
-List of models that support generateContent:
-- models/gemini-2.5-flash
-- models/gemini-2.5-pro
-- models/gemini-2.0-flash
-- models/gemini-2.0-flash-001
-- models/gemini-2.0-flash-exp-image-generation
-- models/gemini-2.0-flash-lite-001
-- models/gemini-2.0-flash-lite
-- models/gemini-exp-1206
-- models/gemini-2.5-flash-preview-tts
-- models/gemini-2.5-pro-preview-tts
-- models/gemma-3-1b-it
-- models/gemma-3-4b-it
-- models/gemma-3-12b-it
-- models/gemma-3-27b-it
-- models/gemma-3n-e4b-it
-- models/gemma-3n-e2b-it
-- models/gemini-flash-latest
-- models/gemini-flash-lite-latest
-- models/gemini-pro-latest
-- models/gemini-2.5-flash-lite
-- models/gemini-2.5-flash-image
-- models/gemini-2.5-flash-preview-09-2025
-- models/gemini-2.5-flash-lite-preview-09-2025
-- models/gemini-3-pro-preview
-- models/gemini-3-flash-preview
-- models/gemini-3-pro-image-preview
-- models/nano-banana-pro-preview
-- models/gemini-robotics-er-1.5-preview
-- models/gemini-2.5-computer-use-preview-10-2025
-- models/deep-research-pro-preview-12-2025
+/**
+ * List of models that support generateContent (Reference):
+ * - models/gemini-2.5-flash
+ * - models/gemini-2.5-pro
+ * - models/gemini-2.0-flash
+ * - models/gemini-3-flash-preview
+ * ... (full list available in tools/check_models.go)
+ */
 
-List of models that support embedContent:
-- models/embedding-001
-- models/text-embedding-004
-- models/gemini-embedding-001
-   */
-    model: "gemini-3-flash-preview",
-    generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: {
-            type: SchemaType.OBJECT,
-            properties: {
-                groups: {
-                    type: SchemaType.ARRAY,
-                    items: {
-                        type: SchemaType.OBJECT,
-                        properties: {
-                            masterText: { type: SchemaType.STRING },
-                            idsToMerge: { 
-                                type: SchemaType.ARRAY,
-                                items: { type: SchemaType.STRING } 
-                            }
-                        },
-                        required: ["masterText", "idsToMerge"]
-                    }
+const MODEL_NAME = "gemini-3-flash-preview";
+
+// Configuration for consistent response format
+const GENERATION_CONFIG: GenerationConfig = {
+    responseMimeType: "application/json",
+    responseSchema: {
+        type: SchemaType.OBJECT,
+        properties: {
+            groups: {
+                type: SchemaType.ARRAY,
+                items: {
+                    type: SchemaType.OBJECT,
+                    properties: {
+                        masterText: { type: SchemaType.STRING },
+                        idsToMerge: { 
+                            type: SchemaType.ARRAY,
+                            items: { type: SchemaType.STRING } 
+                        }
+                    },
+                    required: ["masterText", "idsToMerge"]
                 }
             }
         }
     }
-});
+};
 
 export interface WordGroup {
   masterText: string;
   idsToMerge: string[];
 }
 
+const getApiKeys = (): string[] => {
+    const raw = import.meta.env.VITE_GOOGLE_API_KEY || '';
+    return raw.split(',').map(k => k.trim()).filter(k => k.length > 0);
+};
+
 export const groupWordsWithAI = async (topic: string, words: WordEntry[]): Promise<WordGroup[]> => {
-  if (!apiKey) {
-      throw new Error("Missing Google API Key. Please Add VITE_GOOGLE_API_KEY to .env");
+  const apiKeys = getApiKeys();
+  if (apiKeys.length === 0) {
+      throw new Error("Missing Google API Key. Please Add VITE_GOOGLE_API_KEY to .env (comma separated for multiple keys)");
   }
 
   if (!words || words.length < 2) return [];
 
-  // Filter out very short words to save tokens, if needed. But for now keep all.
   const simplifiedList = words.map(w => ({ id: w.id, text: w.text }));
   const jsonStringList = JSON.stringify(simplifiedList);
 
-  try {
-    const prompt = `
+  const prompt = `
       You are a semantic grouping assistant for a word cloud.
       
       CONTEXT / TOPIC: "${topic}"
@@ -107,18 +78,35 @@ export const groupWordsWithAI = async (topic: string, words: WordEntry[]): Promi
       6. Return ONLY groups that contain 2 or more items.
     `;
 
-    const result = await model.generateContent(prompt);
-    const responseText = result.response.text();
+  let lastError: any = null;
 
-    if (responseText) {
-        const parsed = JSON.parse(responseText);
-        return parsed.groups || [];
-    }
-    
-    return [];
+  // Retry with each API key
+  for (const key of apiKeys) {
+      try {
+          const genAI = new GoogleGenerativeAI(key);
+          const model = genAI.getGenerativeModel({ 
+              model: MODEL_NAME,
+              generationConfig: GENERATION_CONFIG
+          });
 
-  } catch (error) {
-    console.error("Gemini Grouping Error:", error);
-    throw error; // Re-throw to let UI handle it
+          const result = await model.generateContent(prompt);
+          const responseText = result.response.text();
+
+          if (responseText) {
+            const parsed = JSON.parse(responseText);
+            return parsed.groups || [];
+          }
+          
+          return []; // Success with empty result
+
+      } catch (error: any) {
+          console.warn(`Gemini API Failed with key ...${key.slice(-4)}. Trying next key...`, error.message);
+          lastError = error;
+          // Continue loop to next key
+      }
   }
+
+  // If we exit the loop, all keys failed
+  console.error("All Gemini API keys exhausted.");
+  throw lastError || new Error("All API keys failed to generate content.");
 };
